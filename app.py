@@ -4,7 +4,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
-# 1. 網頁設定
+# 1. 網頁基本設定
 st.set_page_config(page_title="HK報關文件轉換器", layout="centered")
 
 st.markdown("""
@@ -32,20 +32,9 @@ if uploaded_files:
         elif "manifest" in fname or "北方" in fname: files_dict["北方文件"] = f
         elif "order" in fname: files_dict["OrderList"] = f
 
-# 3. 狀態顯示
-st.write("### 📋 檔案讀取狀態")
-c1, c2 = st.columns(2)
-with c1:
-    st.markdown(f"{'✅' if files_dict['Invoice'] else '❌'} **Invoice**")
-    st.markdown(f"{'✅' if files_dict['Packing'] else '❌'} **Packing**")
-with c2:
-    st.markdown(f"{'✅' if files_dict['北方文件'] else '❌'} **北方文件**")
-    st.markdown(f"{'✅' if files_dict['OrderList'] else '❌'} **Order List**")
-
-# 4. 轉換邏輯
+# 3. 執行轉換邏輯
 if all(files_dict.values()):
-    st.write("---")
-    if st.button("🚀 執行最終格式化轉換", use_container_width=True):
+    if st.button("🚀 執行精確格式轉換", use_container_width=True):
         try:
             from datetime import datetime, timedelta
             tw_now = datetime.utcnow() + timedelta(hours=8)
@@ -71,19 +60,27 @@ if all(files_dict.values()):
             ws = wb.active
             ws.title = "HK最終報關檔"
 
-            # A. 欄寬設定
-            column_widths = {
+            # --- A. 欄寬設定 ---
+            col_widths = {
                 'B': 18.64, 'C': 17.27, 'D': 12.64, 'E': 12.09, 'F': 12.64,
                 'G': 8.09, 'H': 11.64, 'I': 51.82, 'J': 30, 'K': 15.82,
-                'L': 8.09, 'M': 8.09, 'N': 8.09, 'O': 10.91, 'P': 7.91, 'Q': 8.09
+                'L': 8.09, 'M': 8.09, 'N': 8.09, 'O': 10.91, 'P': 8.09, 'Q': 8.09
             }
-            for col, width in column_widths.items():
+            for col, width in col_widths.items():
                 ws.column_dimensions[col].width = width
 
-            # B. 表頭填充與合併
+            # --- B. 行高設定 ---
+            ws.row_dimensions[1].height = 77
+            ws.row_dimensions[2].height = 25.2
+            for r in range(3, 7): ws.row_dimensions[r].height = 12.5
+            ws.row_dimensions[7].height = 49.5
+            ws.row_dimensions[8].height = 25.2
+            for r in range(9, 13): ws.row_dimensions[r].height = 12.5
+
+            # --- C. 表頭內容與格式 ---
             head_configs = [
                 ("B1", "INVOICE/PACKING", "B1:D1", 28, True, False),
-                ("B2", get_inv("A2"), "B2:I2", 10, False, True), # 自動換行
+                ("B2", get_inv("A2"), "B2:I2", 10, False, True),
                 ("B3", get_inv("A3"), "B3:E3", 10, False, False),
                 ("F3", get_inv("E3"), "F3:I3", 10, False, False),
                 ("B4", get_inv("A4"), "B4:I4", 10, False, False),
@@ -91,8 +88,8 @@ if all(files_dict.values()):
                 ("F5", get_inv("E5"), "F5:I5", 10, False, False),
                 ("B6", get_inv("A6"), "B6:I6", 10, False, False),
                 ("B7", get_inv("A7"), "B7:E7", 10, False, False),
-                ("F7", get_inv("E7"), "F7:I7", 10, False, True),  # 自動換行
-                ("B8", get_inv("A8"), "B8:E8", 10, False, True),  # 自動換行
+                ("F7", get_inv("E7"), "F7:I7", 10, False, True),
+                ("B8", get_inv("A8"), "B8:E8", 10, False, True),
                 ("F8", get_inv("E8"), "F8:I8", 10, False, False),
                 ("B9", get_inv("A9"), "B9:D9", 10, False, False),
                 ("E9", get_inv("D9"), "E9:G9", 10, False, False),
@@ -102,18 +99,17 @@ if all(files_dict.values()):
             ]
 
             for cell_id, content, merge_range, size, is_bold, is_wrap in head_configs:
-                cell = ws[cell_id]
-                cell.value = content
-                cell.font = Font(name='Arial', size=size, bold=is_bold)
-                cell.alignment = Alignment(wrap_text=is_wrap, vertical='center')
+                ws[cell_id] = content
+                ws[cell_id].font = Font(name='Arial', size=size, bold=is_bold)
+                ws[cell_id].alignment = Alignment(wrap_text=is_wrap, vertical='center')
                 ws.merge_cells(merge_range)
 
-            # C. FOB 移至 B11
+            # --- D. FOB 欄位 ---
             ws['B11'] = "FOB"
             ws['B11'].fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
             ws['B11'].font = Font(name='Arial', size=10, bold=True)
 
-            # D. 標題列 (A13-Q13)
+            # --- E. 標題與資料區 ---
             ws['A13'] = "項次"
             headers = ["提單編號", "訂單編號", "好馬吉袋號", "條碼", "單箱重量(GW)", "品項淨重", 
                        "品項英文名稱", "品項中文名稱", "品項備註", "品項品牌", "品項產地", 
@@ -133,14 +129,15 @@ if all(files_dict.values()):
                 cell.border = thin_border
                 cell.alignment = Alignment(horizontal='center', vertical='center')
 
-            # E. 明細處理
             bag_dict = df_n_export.set_index(df_n_export.columns[1])[df_n_export.columns[6]].to_dict()
             barcode_dict = df_n_bag.set_index(df_n_bag.columns[0])[df_n_bag.columns[1]].to_dict()
 
             prev_hawb, curr_row, item_no = None, 14, 1
             for _, r in df_order.iterrows():
+                # 修改處：項次只保留純數字
                 ws.cell(row=curr_row, column=1, value=item_no).border = thin_border
                 ws.cell(row=curr_row, column=1).font = Font(name='Arial', size=10)
+                ws.cell(row=curr_row, column=1).alignment = Alignment(horizontal='center', vertical='center')
                 
                 hawb, oid = str(r.iloc[1]).strip(), str(r.iloc[3]).strip()
                 bag_no, barcode = bag_dict.get(hawb, ""), barcode_dict.get(oid, "")
@@ -165,7 +162,6 @@ if all(files_dict.values()):
                     c = ws.cell(row=curr_row, column=col_idx, value=val)
                     c.font = Font(name='Arial', size=10)
                     c.border = thin_border
-                    # I 欄與 J 欄自動換行 (對應索引 9 與 10)
                     if col_idx in [9, 10]:
                         c.alignment = Alignment(wrap_text=True, vertical='center')
                     else:
@@ -176,8 +172,8 @@ if all(files_dict.values()):
             output = BytesIO()
             wb.save(output)
             st.balloons()
-            st.success("✅ 最終格式文件已完成！")
-            st.download_button(label="📥 下載最終 HK 報關文件", data=output.getvalue(), file_name=f"{t_str}_HK_Customs_Final.xlsx", use_container_width=True)
+            st.success("✅ 項次數字修正完成！")
+            st.download_button(label="📥 下載最終修正版 HK 報關文件", data=output.getvalue(), file_name=f"{t_str}_HK_GM_Final.xlsx", use_container_width=True)
 
         except Exception as e:
             st.error(f"錯誤：{e}")
