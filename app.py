@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from datetime import datetime, timedelta
 
@@ -46,9 +46,9 @@ with c2:
 # 4. 轉換邏輯
 if all(files_dict.values()):
     st.write("---")
-    if st.button("🚀 執行修正版轉換", use_container_width=True):
+    if st.button("🚀 執行對位修正轉換", use_container_width=True):
         try:
-            with st.spinner('正在調整格式與修正重量公式...'):
+            with st.spinner('正在精確搬運表頭資料...'):
                 tw_now = datetime.utcnow() + timedelta(hours=8)
                 t_str = tw_now.strftime("%Y%m%d")
 
@@ -61,35 +61,55 @@ if all(files_dict.values()):
                 df_n_export = smart_read_excel(files_dict["北方文件"], sheet_name='出口明細', dtype=str).fillna('')
                 df_n_bag = smart_read_excel(files_dict["北方文件"], sheet_name='袋數編號', dtype=str).fillna('')
                 
-                # 建立字典
-                bag_dict = df_n_export.set_index(df_n_export.columns[1])[df_n_export.columns[6]].to_dict()
-                barcode_dict = df_n_bag.set_index(df_n_bag.columns[0])[df_n_bag.columns[1]].to_dict()
+                # 讀取整個 Invoice 用於表頭提取 (不設 header)
+                df_inv_raw = smart_read_excel(files_dict["Invoice"], header=None, dtype=str).fillna('')
+
+                # 輔助函式：取得 Invoice 儲存格內容 (A1 對應 0,0)
+                def get_inv(cell_ref):
+                    col_map = {'A':0, 'B':1, 'C':2, 'D':3, 'E':4, 'F':5, 'G':6, 'H':7, 'I':8}
+                    c = col_map[cell_ref[0]]
+                    r = int(cell_ref[1:]) - 1
+                    try: return df_inv_raw.iloc[r, c]
+                    except: return ""
 
                 wb = Workbook()
                 ws = wb.active
                 ws.title = "HK最終報關檔"
 
-                # A. 搬運並處理合併單元格 (1-10行)
-                df_inv_head = smart_read_excel(files_dict["Invoice"], header=None, nrows=10, dtype=str).fillna('')
-                for r_idx, row_data in enumerate(df_inv_head.values, 1):
-                    for c_idx, value in enumerate(row_data, 1):
-                        ws.cell(row=r_idx, column=c_idx, value=value).font = Font(name='Arial', size=10)
-                
-                # 執行指定的合併需求
-                merge_list = [
-                    "B1:D1", "B2:I2", "B3:E3", "F3:I3", "B4:I4", "B5:E5", "F5:I5", 
-                    "B6:I6", "B7:E7", "F7:I7", "B8:E8", "F8:I8", "B9:D9", "E9:G9", 
-                    "H9:I9", "B10:E10", "F10:I10"
+                # A. 填寫並合併表頭 (B1~F10 邏輯)
+                # 定義內容與合併規則
+                head_configs = [
+                    ("B1", "INVOICE/PACKING", "B1:D1", True), # 加粗
+                    ("B2", get_inv("A2"), "B2:I2", False),
+                    ("B3", get_inv("A3"), "B3:E3", False),
+                    ("F3", get_inv("E3"), "F3:I3", False),
+                    ("B4", get_inv("A4"), "B4:I4", False),
+                    ("B5", get_inv("A5"), "B5:E5", False),
+                    ("F5", get_inv("E5"), "F5:I5", False),
+                    ("B6", get_inv("A6"), "B6:I6", False),
+                    ("B7", get_inv("A7"), "B7:E7", False),
+                    ("F7", get_inv("E7"), "F7:I7", False),
+                    ("B8", get_inv("A8"), "B8:E8", False),
+                    ("F8", get_inv("E8"), "F8:I8", False),
+                    ("B9", get_inv("A9"), "B9:D9", False),
+                    ("E9", get_inv("D9"), "E9:G9", False),
+                    ("H9", get_inv("G9"), "H9:I9", False),
+                    ("B10", get_inv("A10"), "B10:E10", False),
+                    ("F10", get_inv("E10"), "F10:I10", False)
                 ]
-                for area in merge_list:
-                    ws.merge_cells(area)
+
+                for cell_id, content, merge_range, is_bold in head_configs:
+                    cell = ws[cell_id]
+                    cell.value = content
+                    cell.font = Font(name='Arial', size=10, bold=is_bold)
+                    ws.merge_cells(merge_range)
 
                 # B. 寫入 FOB (黃底)
                 ws['A11'] = "FOB"
                 ws['A11'].fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
                 ws['A11'].font = Font(bold=True)
 
-                # C. 寫入項次與標題 (A13-Q13)
+                # C. 標題列格式 (A13-Q13)
                 ws['A13'] = "項次"
                 headers = ["提單編號", "訂單編號", "好馬吉袋號", "條碼", "單箱重量(GW)", "品項淨重", 
                            "品項英文名稱", "品項中文名稱", "品項備註", "品項品牌", "品項產地", 
@@ -98,11 +118,11 @@ if all(files_dict.values()):
                 green_fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
                 thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
-                # 設定 A13 格式
+                # 設定 A13 標題
                 ws['A13'].fill = green_fill
                 ws['A13'].font = Font(bold=True, name='Arial', size=10)
-                ws['A13'].alignment = Alignment(horizontal='center')
                 ws['A13'].border = thin_border
+                ws['A13'].alignment = Alignment(horizontal='center')
 
                 for i, title in enumerate(headers, 2): 
                     cell = ws.cell(row=13, column=i, value=title)
@@ -112,56 +132,60 @@ if all(files_dict.values()):
                     cell.border = thin_border
 
                 # D. 明細處理 (14行起)
+                bag_dict = df_n_export.set_index(df_n_export.columns[1])[df_n_export.columns[6]].to_dict()
+                barcode_dict = df_n_bag.set_index(df_n_bag.columns[0])[df_n_bag.columns[1]].to_dict()
+
                 prev_hawb = None
                 curr_row = 14
-                item_no = 1  # 項次計數
+                item_no = 1
 
                 for index, r in df_order.iterrows():
-                    # 1. 寫入項次 (A欄)
+                    # 項次 (A欄)
                     ws.cell(row=curr_row, column=1, value=item_no).border = thin_border
                     
-                    hawb = str(r.iloc[1]).strip() # 提單編號 (B)
-                    oid = str(r.iloc[3]).strip()  # 訂單編號 (D)
+                    hawb = str(r.iloc[1]).strip() # B 提單
+                    oid = str(r.iloc[3]).strip()  # D 訂單
                     bag_no = bag_dict.get(hawb, "")
-                    barcode = barcode_dict.get(oid, "") # 依公式 D14 抓條碼
+                    barcode = barcode_dict.get(oid, "")
 
-                    # 2. 單箱重量修正 (FOB邏輯)
-                    gw_raw = r.iloc[29] # AE欄
+                    # 單箱重量修正 (IF B14=B13)
+                    gw_raw = r.iloc[29] # AE
                     gw_display = ""
-                    # 邏輯：如果當前 HAWB 與前一個相同，則顯示空值
                     if hawb != prev_hawb:
                         gw_display = gw_raw
                     
-                    # 3. 品項淨重修正 (NW = GW - 0.2, 最小 0.01)
+                    # 品項淨重修正 (GW-0.2, 最小0.01)
                     nw_display = ""
                     if gw_display != "":
                         try:
                             calc_nw = float(gw_display) - 0.2
-                            nw_display = calc_nw if calc_nw > 0 else 0.01
-                            nw_display = "{:.2f}".format(nw_display)
+                            nw_final = calc_nw if calc_nw > 0 else 0.01
+                            nw_display = "{:.2f}".format(nw_final)
                         except:
                             nw_display = ""
 
-                    data = [
+                    # 資料列內容
+                    row_content = [
                         hawb, oid, bag_no, barcode, gw_display, nw_display,
                         "COSMETICS", r.iloc[33], r.iloc[34], "TRUU+TRUE YOU", 
                         r.iloc[36], r.iloc[37], "SET", r.iloc[39], r.iloc[40], "TWD"
                     ]
 
-                    for col_idx, val in enumerate(data, 2):
-                        cell = ws.cell(row=curr_row, column=col_idx, value=val)
-                        cell.font = Font(name='Arial', size=10)
-                        cell.border = thin_border
+                    for col_idx, val in enumerate(row_content, 2):
+                        c = ws.cell(row=curr_row, column=col_idx, value=val)
+                        c.font = Font(name='Arial', size=10)
+                        c.border = thin_border
                     
                     prev_hawb = hawb
                     curr_row += 1
                     item_no += 1
 
+                # E. 下載
                 output = BytesIO()
                 wb.save(output)
                 st.balloons()
-                st.success("✅ 修正版轉換成功！")
-                st.download_button(label="📥 下載修正版 HK 報關文件", data=output.getvalue(), file_name=f"{t_str}_HK_GM_Final_Fixed.xlsx", use_container_width=True)
+                st.success("✅ 表頭對位修正成功！")
+                st.download_button(label="📥 下載 HK 報關文件", data=output.getvalue(), file_name=f"{t_str}_HK_GM_Final.xlsx", use_container_width=True)
 
         except Exception as e:
             st.error(f"錯誤：{e}")
