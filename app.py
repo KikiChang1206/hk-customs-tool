@@ -5,7 +5,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from datetime import datetime, timedelta
 
-# 1. 網頁基本設定 (修正國旗文字)
+# 1. 網頁基本設定
 st.set_page_config(page_title="HK報關文件轉換器", layout="centered")
 
 st.markdown("""
@@ -18,7 +18,6 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 國旗圖標已改為文字
 st.markdown('<p class="big-title">🇭🇰 HK 報關文件轉換器</p>', unsafe_allow_html=True)
 
 # 2. 檔案上傳
@@ -36,7 +35,7 @@ if uploaded_files:
 
 # 3. 執行轉換邏輯
 if all(files_dict.values()):
-    if st.button("🚀 執行排序與格式優化轉換", use_container_width=True):
+    if st.button("🚀 執行最終格式化轉換", use_container_width=True):
         try:
             tw_now = datetime.utcnow() + timedelta(hours=8)
             t_str = tw_now.strftime("%Y%m%d")
@@ -65,9 +64,15 @@ if all(files_dict.values()):
             ws = wb.active
             ws.title = "HK最終報關檔"
 
-            # --- 1. 欄寬與行高設定 (修正 E 欄寬為 14) ---
-            col_widths = {'B': 20.8, 'C': 19.2, 'D': 14.7, 'E': 14, 'F': 14, 'G': 8.7, 'H': 13, 'I': 51.82, 'J': 30, 'K': 17.9, 'L': 8.7, 'M': 8.7, 'N': 8.09, 'O': 10.91, 'P': 9, 'Q': 8.09}
+            # --- 1. 欄寬與行高設定 (A 欄修正為 6) ---
+            ws.column_dimensions['A'].width = 6
+            col_widths = {
+                'B': 20.8, 'C': 19.2, 'D': 14.7, 'E': 14, 'F': 14, 
+                'G': 8.7, 'H': 13, 'I': 51.82, 'J': 30, 'K': 17.9, 
+                'L': 8.7, 'M': 8.7, 'N': 8.09, 'O': 10.91, 'P': 9, 'Q': 8.09
+            }
             for col, width in col_widths.items(): ws.column_dimensions[col].width = width
+            
             ws.row_dimensions[1].height = 77
             ws.row_dimensions[2].height = 25.2
             for r in range(3, 7): ws.row_dimensions[r].height = 12.5
@@ -114,26 +119,18 @@ if all(files_dict.values()):
                 bag_no = bag_dict.get(hawb, "")
                 barcode = barcode_lookup_dict.get(bag_no, "")
                 gw_raw = r.iloc[30] # AE 欄
-                
-                # 用於計算與排序的原始數值
                 try: gw_num = float(gw_raw)
                 except: gw_num = 0.0
 
                 all_data_rows.append({
-                    "hawb": hawb,
-                    "oid": oid,
-                    "bag_no": bag_no,
-                    "barcode": barcode,
-                    "gw_raw": gw_raw,
-                    "gw_num": gw_num,
-                    "r_data": r
+                    "hawb": hawb, "oid": oid, "bag_no": bag_no, "barcode": barcode,
+                    "gw_raw": gw_raw, "gw_num": gw_num, "r_data": r
                 })
 
-            # --- 5. 排序邏輯 ---
-            # 優先按 條碼(E欄)、次按 提單編號(B欄)、最後按 單箱重量(GW, F欄)
+            # 執行排序 (條碼 -> 提單號碼 -> 單箱重量)
             all_data_rows.sort(key=lambda x: (x["barcode"], x["hawb"], x["gw_num"]))
 
-            # --- 6. 資料處理與填寫 ---
+            # --- 5. 資料處理與填寫 ---
             prev_hawb, curr_row, item_no = None, 14, 1
             sum_gw = sum_nw = sum_qty = sum_amount = 0.0
 
@@ -170,7 +167,7 @@ if all(files_dict.values()):
 
                 prev_hawb, curr_row, item_no = hawb, curr_row + 1, item_no + 1
 
-            # --- 7. 最後補充欄位 (總結列，不參與排序) ---
+            # --- 6. 最後補充欄位 (不參與排序) ---
             packing_last_val = df_packing_raw.iloc[-1, 0] if not df_packing_raw.empty else ""
             ws.cell(row=curr_row, column=2, value=packing_last_val).font = Font(name='Arial', size=10, bold=True)
             ws.cell(row=curr_row, column=5, value=f"包{bag_count}袋").font = Font(name='Arial', size=10, bold=True)
@@ -184,7 +181,7 @@ if all(files_dict.values()):
             output = BytesIO()
             wb.save(output)
             st.balloons()
-            st.success("✅ 資料排序與彙整完成！")
+            st.success("✅ 最終格式文件已完成！")
             st.download_button(label="📥 下載最終 HK 報關文件", data=output.getvalue(), file_name=f"{t_str}_HK_GM_Final.xlsx", use_container_width=True)
 
         except Exception as e:
