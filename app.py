@@ -64,12 +64,12 @@ if all(files_dict.values()):
             ws = wb.active
             ws.title = "HK最終報關檔"
 
-            # --- 1. 欄寬與行高設定 (A 欄修正為 6) ---
-            ws.column_dimensions['A'].width = 6
+            # --- 1. 欄寬與行高設定 (A: 5.5, P: 10.5) ---
+            ws.column_dimensions['A'].width = 5.5
             col_widths = {
                 'B': 20.8, 'C': 19.2, 'D': 14.7, 'E': 14, 'F': 14, 
                 'G': 8.7, 'H': 13, 'I': 51.82, 'J': 30, 'K': 17.9, 
-                'L': 8.7, 'M': 8.7, 'N': 8.09, 'O': 10.91, 'P': 9, 'Q': 8.09
+                'L': 8.7, 'M': 8.7, 'N': 8.09, 'O': 10.91, 'P': 10.5, 'Q': 8.09
             }
             for col, width in col_widths.items(): ws.column_dimensions[col].width = width
             
@@ -97,7 +97,7 @@ if all(files_dict.values()):
             ws['B11'].fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
             ws['B11'].font = Font(name='Arial', size=10, bold=True)
 
-            # --- 3. 標題列 (A13項次空白) ---
+            # --- 3. 標題列 ---
             ws['A13'] = ""
             headers = ["提單編號", "訂單編號", "好馬吉袋號", "條碼", "單箱重量(GW)", "品項淨重", "品項英文名稱", "品項中文名稱", "品項備註", "品項品牌", "品項產地", "品項數量", "單位", "品項單價", "品項小計", "幣別"]
             green_fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
@@ -109,37 +109,37 @@ if all(files_dict.values()):
                 cell.border = thin_border
                 cell.alignment = Alignment(horizontal='center', vertical='center')
 
-            # --- 4. 準備排序數據 ---
+            # --- 4. 資料與排序準備 ---
             barcode_lookup_dict = df_n_bag.set_index(df_n_bag.columns[0])[df_n_bag.columns[1]].to_dict()
             bag_dict = df_n_export.set_index(df_n_export.columns[1])[df_n_export.columns[6]].to_dict()
 
-            all_data_rows = []
+            all_rows = []
             for _, r in df_order.iterrows():
                 hawb, oid = str(r.iloc[1]).strip(), str(r.iloc[3]).strip()
                 bag_no = bag_dict.get(hawb, "")
                 barcode = barcode_lookup_dict.get(bag_no, "")
-                gw_raw = r.iloc[30] # AE 欄
+                gw_raw = r.iloc[30]
                 try: gw_num = float(gw_raw)
                 except: gw_num = 0.0
 
-                all_data_rows.append({
+                all_rows.append({
                     "hawb": hawb, "oid": oid, "bag_no": bag_no, "barcode": barcode,
-                    "gw_raw": gw_raw, "gw_num": gw_num, "r_data": r
+                    "gw_raw": gw_raw, "gw_num": gw_num, "orig_row": r
                 })
 
-            # 執行排序 (條碼 -> 提單號碼 -> 單箱重量)
-            all_data_rows.sort(key=lambda x: (x["barcode"], x["hawb"], x["gw_num"]))
+            # 三階排序：條碼 -> 提單 -> 重量
+            all_rows.sort(key=lambda x: (x["barcode"], x["hawb"], x["gw_num"]))
 
-            # --- 5. 資料處理與填寫 ---
+            # --- 5. 資料填充 ---
             prev_hawb, curr_row, item_no = None, 14, 1
             sum_gw = sum_nw = sum_qty = sum_amount = 0.0
 
-            for item in all_data_rows:
+            for entry in all_rows:
                 ws.cell(row=curr_row, column=1, value=item_no).font = Font(name='Arial', size=10)
                 ws.cell(row=curr_row, column=1).alignment = Alignment(horizontal='center', vertical='center')
                 
-                hawb, oid, bag_no, barcode, gw_raw = item["hawb"], item["oid"], item["bag_no"], item["barcode"], item["gw_raw"]
-                r = item["r_data"]
+                hawb, oid, bag_no, barcode, gw_raw = entry["hawb"], entry["oid"], entry["bag_no"], entry["barcode"], entry["gw_raw"]
+                r = entry["orig_row"]
 
                 gw_display = nw_display = ""
                 if hawb != prev_hawb:
@@ -167,7 +167,7 @@ if all(files_dict.values()):
 
                 prev_hawb, curr_row, item_no = hawb, curr_row + 1, item_no + 1
 
-            # --- 6. 最後補充欄位 (不參與排序) ---
+            # --- 6. 統計匯總列 ---
             packing_last_val = df_packing_raw.iloc[-1, 0] if not df_packing_raw.empty else ""
             ws.cell(row=curr_row, column=2, value=packing_last_val).font = Font(name='Arial', size=10, bold=True)
             ws.cell(row=curr_row, column=5, value=f"包{bag_count}袋").font = Font(name='Arial', size=10, bold=True)
@@ -181,8 +181,8 @@ if all(files_dict.values()):
             output = BytesIO()
             wb.save(output)
             st.balloons()
-            st.success("✅ 最終格式文件已完成！")
+            st.success("✅ 最終報關文件產出成功！")
             st.download_button(label="📥 下載最終 HK 報關文件", data=output.getvalue(), file_name=f"{t_str}_HK_GM_Final.xlsx", use_container_width=True)
 
         except Exception as e:
-            st.error(f"錯誤：{e}")
+            st.error(f"發生錯誤：{e}")
