@@ -35,7 +35,7 @@ if uploaded_files:
 
 # 3. 執行轉換邏輯
 if all(files_dict.values()):
-    if st.button("🚀 執行最終格式化轉換", use_container_width=True):
+    if st.button("🚀 執行品牌判別與格式化轉換", use_container_width=True):
         try:
             tw_now = datetime.utcnow() + timedelta(hours=8)
             t_str = tw_now.strftime("%Y%m%d")
@@ -53,6 +53,20 @@ if all(files_dict.values()):
             df_inv_raw = smart_read_excel(files_dict["Invoice"], header=None, dtype=str).fillna('')
             df_packing_raw = smart_read_excel(files_dict["Packing"], header=None, dtype=str).fillna('')
 
+            # --- 品牌判別邏輯 ---
+            company_name = str(df_inv_raw.iloc[1, 0]) # 讀取 A2 (索引 1, 0)
+            
+            if "歐瑞生醫" in company_name:
+                brand_eng_name = "food supplement"
+                brand_label = "ALLRE"
+            elif "綺麗絲" in company_name:
+                brand_eng_name = "MAKEUP"
+                brand_label = "MKUP"
+            else:
+                # 預設品牌 (特路)
+                brand_eng_name = "COSMETICS"
+                brand_label = "TRUU+TRUE YOU"
+
             def get_inv(cell_ref):
                 col_map = {'A':0, 'B':1, 'C':2, 'D':3, 'E':4, 'F':5, 'G':6, 'H':7, 'I':8}
                 c = col_map[cell_ref[0]]
@@ -64,15 +78,10 @@ if all(files_dict.values()):
             ws = wb.active
             ws.title = "HK最終報關檔"
 
-            # --- 1. 欄寬與行高設定 (A: 5.5, P: 10.5) ---
+            # --- 1. 欄寬與行高設定 ---
             ws.column_dimensions['A'].width = 5.5
-            col_widths = {
-                'B': 20.8, 'C': 19.2, 'D': 14.7, 'E': 14, 'F': 14, 
-                'G': 8.7, 'H': 13, 'I': 51.82, 'J': 30, 'K': 17.9, 
-                'L': 8.7, 'M': 8.7, 'N': 8.09, 'O': 10.91, 'P': 10.5, 'Q': 8.09
-            }
+            col_widths = {'B': 20.8, 'C': 19.2, 'D': 14.7, 'E': 14, 'F': 14, 'G': 8.7, 'H': 13, 'I': 51.82, 'J': 30, 'K': 17.9, 'L': 8.7, 'M': 8.7, 'N': 8.09, 'O': 10.91, 'P': 10.5, 'Q': 8.09}
             for col, width in col_widths.items(): ws.column_dimensions[col].width = width
-            
             ws.row_dimensions[1].height = 77
             ws.row_dimensions[2].height = 25.2
             for r in range(3, 7): ws.row_dimensions[r].height = 12.5
@@ -109,7 +118,7 @@ if all(files_dict.values()):
                 cell.border = thin_border
                 cell.alignment = Alignment(horizontal='center', vertical='center')
 
-            # --- 4. 資料與排序準備 ---
+            # --- 4. 資料排序準備 ---
             barcode_lookup_dict = df_n_bag.set_index(df_n_bag.columns[0])[df_n_bag.columns[1]].to_dict()
             bag_dict = df_n_export.set_index(df_n_export.columns[1])[df_n_export.columns[6]].to_dict()
 
@@ -122,12 +131,8 @@ if all(files_dict.values()):
                 try: gw_num = float(gw_raw)
                 except: gw_num = 0.0
 
-                all_rows.append({
-                    "hawb": hawb, "oid": oid, "bag_no": bag_no, "barcode": barcode,
-                    "gw_raw": gw_raw, "gw_num": gw_num, "orig_row": r
-                })
+                all_rows.append({"hawb": hawb, "oid": oid, "bag_no": bag_no, "barcode": barcode, "gw_raw": gw_raw, "gw_num": gw_num, "orig_row": r})
 
-            # 三階排序：條碼 -> 提單 -> 重量
             all_rows.sort(key=lambda x: (x["barcode"], x["hawb"], x["gw_num"]))
 
             # --- 5. 資料填充 ---
@@ -158,7 +163,13 @@ if all(files_dict.values()):
                 try: sum_amount += float(r.iloc[40]) 
                 except: pass
 
-                row_content = [hawb, oid, bag_no, barcode, gw_display, nw_display, "COSMETICS", r.iloc[33], r.iloc[34], "TRUU+TRUE YOU", r.iloc[36], r.iloc[37], "SET", r.iloc[39], r.iloc[40], "TWD"]
+                # 填充資料列 (使用動態判別的品牌名稱與標籤)
+                row_content = [
+                    hawb, oid, bag_no, barcode, gw_display, nw_display, 
+                    brand_eng_name, r.iloc[33], r.iloc[34], brand_label, 
+                    r.iloc[36], r.iloc[37], "SET", r.iloc[39], r.iloc[40], "TWD"
+                ]
+                
                 for col_idx, val in enumerate(row_content, 2):
                     c = ws.cell(row=curr_row, column=col_idx, value=val)
                     c.font = Font(name='Arial', size=10)
@@ -181,7 +192,7 @@ if all(files_dict.values()):
             output = BytesIO()
             wb.save(output)
             st.balloons()
-            st.success("✅ 最終報關文件產出成功！")
+            st.success(f"✅ 辨識品牌：{brand_label}，轉換完成！")
             st.download_button(label="📥 下載最終 HK 報關文件", data=output.getvalue(), file_name=f"{t_str}_HK_GM_Final.xlsx", use_container_width=True)
 
         except Exception as e:
