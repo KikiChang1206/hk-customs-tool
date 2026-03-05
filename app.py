@@ -4,6 +4,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from datetime import datetime, timedelta
+import math
 
 # 1. 網頁基本設定
 st.set_page_config(page_title="HK報關文件轉換器", layout="centered")
@@ -94,16 +95,18 @@ if all(files_dict.values()):
 
                 wb = Workbook(); ws = wb.active; ws.title = "HK最終報關檔"
 
-                # 欄寬與行高
+                # 欄寬與行高預設
                 ws.column_dimensions['A'].width = 5.5
                 col_widths = {'B': 20.8, 'C': 19.2, 'D': 14.7, 'E': 14, 'F': 14, 'G': 8.7, 'H': 13, 'I': 51.82, 'J': 30, 'K': 17.9, 'L': 8.7, 'M': 8.7, 'N': 8.09, 'O': 10.91, 'P': 10.5, 'Q': 8.09}
                 for col, width in col_widths.items(): ws.column_dimensions[col].width = width
+                
+                # 表頭行高固定
                 ws.row_dimensions[1].height = 77; ws.row_dimensions[2].height = 25.2
                 for r in range(3, 7): ws.row_dimensions[r].height = 12.5
                 ws.row_dimensions[7].height = 49.5; ws.row_dimensions[8].height = 25.2
                 for r in range(9, 13): ws.row_dimensions[r].height = 12.5
 
-                # 表頭合併
+                # 表頭填充邏輯 (同前版)
                 def get_inv(ref):
                     cmap = {'A':0, 'B':1, 'C':2, 'D':3, 'E':4, 'F':5, 'G':6, 'H':7, 'I':8}
                     c = cmap[ref[0]]; r = int(ref[1:]) - 1
@@ -121,7 +124,6 @@ if all(files_dict.values()):
                 ws['B11'].font = Font(name='Arial', size=10, bold=True)
 
                 # 標題列
-                ws['A13'] = ""
                 headers = ["提單編號", "訂單編號", "好馬吉袋號", "條碼", "單箱重量(GW)", "品項淨重", "品項英文名稱", "品項中文名稱", "品項備註", "品項品牌", "品項產地", "品項數量", "單位", "品項單價", "品項小計", "幣別"]
                 green_fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
                 thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
@@ -129,12 +131,12 @@ if all(files_dict.values()):
                     cell = ws.cell(row=13, column=i, value=title); cell.fill = green_fill; cell.font = Font(name='Arial', size=10, bold=True)
                     cell.border = thin_border; cell.alignment = Alignment(horizontal='center', vertical='center')
 
-                # 字典建置 (VLOOKUP)
+                # 字典建置
                 barcode_dict = df_n_bag_raw.fillna('').set_index(df_n_bag_raw.columns[0])[df_n_bag_raw.columns[1]].to_dict()
                 bag_dict = df_n_export.set_index(df_n_export.columns[1])[df_n_export.columns[6]].to_dict()
                 bag_count = len(df_n_bag_raw[df_n_bag_raw.iloc[:, 1].str.strip() != ""])
 
-                # --- 排序與資料填充 ---
+                # 資料處理
                 all_rows = []
                 for _, r in df_order.iterrows():
                     hawb, oid = str(r.iloc[1]).strip(), str(r.iloc[3]).strip()
@@ -144,7 +146,6 @@ if all(files_dict.values()):
                     except: gw_num = 0.0
                     all_rows.append({"hawb": hawb, "oid": oid, "bag_no": bag_no, "barcode": barcode, "gw_raw": gw_raw, "gw_num": gw_num, "orig_row": r})
 
-                # 排序: 條碼 -> 提單 -> 重量
                 all_rows.sort(key=lambda x: (x["barcode"], x["hawb"], x["gw_num"]))
 
                 prev_hawb, curr_row, item_no = None, 14, 1
@@ -171,13 +172,34 @@ if all(files_dict.values()):
                     except: pass
 
                     row_content = [hawb, oid, bag_no, barcode, gw_display, nw_display, current_brand["eng"], r.iloc[33], r.iloc[34], current_brand["label"], r.iloc[36], r.iloc[37], "SET", r.iloc[39], r.iloc[40], "TWD"]
+                    
+                    # --- 計算此行需要的行高 ---
+                    max_lines = 1
                     for col_idx, val in enumerate(row_content, 2):
-                        c = ws.cell(row=curr_row, column=col_idx, value=val); c.font = Font(name='Arial', size=10)
-                        c.border = thin_border; c.alignment = Alignment(wrap_text=(col_idx in [9, 10]), vertical='center')
+                        c = ws.cell(row=curr_row, column=col_idx, value=val)
+                        c.font = Font(name='Arial', size=10)
+                        c.border = thin_border
+                        
+                        # 設定換行與對齊
+                        if col_idx in [9, 10]: # 品項中文名稱 與 品項備註 欄位
+                            c.alignment = Alignment(wrap_text=True, vertical='center')
+                            # 動態估計行數: 內容長度 / (欄寬 * 0.8) -> 0.8 是粗略估計中文字在 Arial 10號下的佔比
+                            current_col_width = col_widths.get(chr(64 + col_idx), 10)
+                            text_str = str(val) if val else ""
+                            # 考慮中文字元與手動換行符
+                            lines = text_str.count('\n') + 1
+                            chars_per_line = max(1, math.floor(current_col_width * 0.75)) # 經驗係數
+                            wrap_lines = math.ceil(len(text_str) / chars_per_line)
+                            max_lines = max(max_lines, lines, wrap_lines)
+                        else:
+                            c.alignment = Alignment(vertical='center')
+
+                    # 設定行高 (1行大約 15~18 點高)
+                    ws.row_dimensions[curr_row].height = max_lines * 16.5
                     
                     prev_hawb, curr_row, item_no = hawb, curr_row + 1, item_no + 1
 
-                # 統計匯總
+                # 統計匯總 (同前版)
                 packing_last_val = df_pac_raw.iloc[-1, 0] if not df_pac_raw.empty else ""
                 ws.cell(row=curr_row, column=2, value=packing_last_val).font = Font(name='Arial', size=10, bold=True)
                 ws.cell(row=curr_row, column=5, value=f"包{bag_count}袋").font = Font(name='Arial', size=10, bold=True)
